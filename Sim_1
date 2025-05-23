@@ -1,0 +1,409 @@
+clear; clc;
+
+%% 1. 定義各變數範圍
+T = -4:0.1:4;       % 食物溫度範圍 (°C)
+Wgt = 0:0.1:2;      % 食物重量範圍 (kg)
+Pow = 600:5:1200;   % 烤箱功率範圍 (watt)
+Time = 0:0.1:10;    % 烤箱運行時間範圍 (min)
+
+nT    = numel(T);
+nWgt  = numel(Wgt);
+nPow  = numel(Pow);
+nTime = numel(Time);
+
+%% 2. 輸出變數 (功率、時間) 的模糊隸屬函數計算
+% (a) 功率隸屬函數: lowPow, medPow, highPow
+lowPow   = zeros(1,nPow);
+medPow   = zeros(1,nPow);
+highPow  = zeros(1,nPow);
+for i = 1:nPow
+    currPow = Pow(i);
+    % low: 在 [600,800] 區間，隸屬度為 (800-currPow)/200
+    if currPow >= 600 && currPow <= 800
+        lowPow(i) = (800 - currPow) / 200;
+    else
+        lowPow(i) = 0;
+    end
+    % medium: 在 [600,900] 區間上升，在 (900,1200] 區間下降
+    if currPow >= 600 && currPow <= 900
+        medPow(i) = (currPow - 600) / 300;
+    elseif currPow > 900 && currPow <= 1200
+        medPow(i) = (1200 - currPow) / 300;
+    else
+        medPow(i) = 0;
+    end
+    % high: 在 [1000,1200] 區間，隸屬度為 (currPow - 1000)/200
+    if currPow >= 1000 && currPow <= 1200
+        highPow(i) = (currPow - 1000) / 200;
+    else
+        highPow(i) = 0;
+    end
+end
+
+% (b) 時間隸屬函數: shortTime, medTime, longTime
+shortTime = zeros(1,nTime);
+medTime   = zeros(1,nTime);
+longTime  = zeros(1,nTime);
+for j = 1:nTime
+    currT = Time(j);
+    % short: 於 [0,5] 區間，隸屬度 = (5-currT)/5
+    if currT >= 0 && currT <= 5
+        shortTime(j) = (5 - currT) / 5;
+    else
+        shortTime(j) = 0;
+    end
+    % medium: 在 [0,5] 區間上升，在 (5,10] 區間下降
+    if currT >= 0 && currT <= 5
+        medTime(j) = currT / 5;
+    elseif currT > 5 && currT <= 10
+        medTime(j) = (10 - currT) / 5;
+    else
+        medTime(j) = 0;
+    end
+    % long: 於 [5,10] 區間，隸屬度 = (currT - 5)/5
+    if currT >= 5 && currT <= 10
+        longTime(j) = (currT - 5) / 5;
+    else
+        longTime(j) = 0;
+    end
+end
+
+%% 3. 輸入變數 (溫度、重量) 之模糊化
+% 食物溫度的隸屬函數: lowT, midT, highT
+lowT  = zeros(1,nT);
+midT  = zeros(1,nT);
+highT = zeros(1,nT);
+for k = 1:nT
+    temp = T(k);
+    % lowT: 定義在 [-4,0] 區間，隸屬度 = -temp/4
+    if temp >= -4 && temp <= 0
+        lowT(k) = -temp / 4;
+    else
+        lowT(k) = 0;
+    end
+    % midT: 在 [-3,0] 上升 (值 = (temp+3)/3)，於 (0,3] 下降 (值 = (3-temp)/3)
+    if temp >= -3 && temp <= 0
+        midT(k) = (temp + 3) / 3;
+    elseif temp > 0 && temp <= 3
+        midT(k) = (3 - temp) / 3;
+    else
+        midT(k) = 0;
+    end
+    % highT: 在 [0,4] 區間，隸屬度 = temp/4
+    if temp >= 0 && temp <= 4
+        highT(k) = temp / 4;
+    else
+        highT(k) = 0;
+    end
+end
+
+% 食物重量的隸屬函數: lightWgt, medWgt, heavyWgt
+lightWgt = zeros(1,nWgt);
+medWgt   = zeros(1,nWgt);
+heavyWgt = zeros(1,nWgt);
+for k = 1:nWgt
+    mVal = Wgt(k);
+    % light: [0,1] 區間，隸屬度 = 1 - mVal
+    if mVal >= 0 && mVal <= 1
+        lightWgt(k) = 1 - mVal;
+    else
+        lightWgt(k) = 0;
+    end
+    % medium: 在 [0,1] 區間，隸屬度 = mVal；於 (1,2] 區間，隸屬度 = 2 - mVal
+    if mVal >= 0 && mVal <= 1
+        medWgt(k) = mVal;
+    elseif mVal > 1 && mVal <= 2
+        medWgt(k) = 2 - mVal;
+    else
+        medWgt(k) = 0;
+    end
+    % heavy: 在 [1,2] 區間，隸屬度 = mVal - 1
+    if mVal >= 1 && mVal <= 2
+        heavyWgt(k) = mVal - 1;
+    else
+        heavyWgt(k) = 0;
+    end
+end
+
+%% 4. 依據 (溫度, 重量) 組合計算「規則激活程度」(alpha-cut)
+% 針對功率及時間各自有三個規則組，每一組依不同隸屬函數進行 min/max 推論
+numPairs = nT * nWgt;    % 組合個數
+% 初始化規則激活向量（每一筆為對應每組 (T, Wgt) 的規則激活）
+alphaLowPow   = zeros(1,numPairs);
+alphaMedPow   = zeros(1,numPairs);
+alphaHighPow  = zeros(1,numPairs);
+alphaShortT   = zeros(1,numPairs);
+alphaMedTime  = zeros(1,numPairs);
+alphaLongT    = zeros(1,numPairs);
+
+cnt = 1; % 計數器
+for i = 1:nT
+    for j = 1:nWgt
+        % 以下依據不同規則計算 min(...) 之結果，再取 max 作為激活強度
+        
+        % --- 對功率:
+        % 規則組 1: 若溫度 → lowT 及 重量 → heavyWgt (R1)，以及 lowT 結合 medWgt (R4) 與 lightWgt (R7)
+        r1 = min(lowT(i), heavyWgt(j));
+        r4 = min(lowT(i), medWgt(j));
+        r7 = min(lowT(i), lightWgt(j));
+        alphaHighPow(cnt) = max([r1, r4, r7]);
+        
+        % 規則組 2: midT 與 heavyWgt (R2)、midT 與 medWgt (R5)、midT 與 lightWgt (R8)
+        r2 = min(midT(i), heavyWgt(j));
+        r5 = min(midT(i), medWgt(j));
+        r8 = min(midT(i), lightWgt(j));
+        alphaMedPow(cnt) = max([r2, r5, r8]);
+        
+        % 規則組 3: highT 與 heavyWgt (R3)、highT 與 medWgt (R6)、highT 與 lightWgt (R9)
+        r3 = min(highT(i), heavyWgt(j));
+        r6 = min(highT(i), medWgt(j));
+        r9 = min(highT(i), lightWgt(j));
+        alphaLowPow(cnt) = max([r3, r6, r9]);
+        
+        % --- 對時間:
+        % 規則組 1: (R1, R4, R7) 分別以 lowT, midT, highT 與 heavyWgt 結合 → 激活 longTime
+        r1t = min(lowT(i), heavyWgt(j));
+        r4t = min(midT(i), heavyWgt(j));
+        r7t = min(highT(i), heavyWgt(j));
+        alphaLongT(cnt) = max([r1t, r4t, r7t]);
+        
+        % 規則組 2: (R2, R5, R8) 以低溫與中等重量搭配
+        r2t = min(lowT(i), medWgt(j));
+        r5t = min(midT(i), medWgt(j));
+        r8t = min(highT(i), medWgt(j));
+        alphaMedTime(cnt) = max([r2t, r5t, r8t]);
+        
+        % 規則組 3: (R3, R6, R9) 以低溫與輕量搭配 → 激活 shortTime
+        r3t = min(lowT(i), lightWgt(j));
+        r6t = min(midT(i), lightWgt(j));
+        r9t = min(highT(i), lightWgt(j));
+        alphaShortT(cnt) = max([r3t, r6t, r9t]);
+        
+        cnt = cnt + 1;
+    end
+end
+
+%% 5. 依據 alpha-cut 裁剪 (截斷) 輸出隸屬函數，並進行聚合
+% 使用 min() 運算對各個隸屬函數進行裁剪後再使用 max() 聚合
+% (a) 對功率，分別處理 lowPow, medPow, highPow
+clipLowPow  = zeros(numPairs, nPow);
+clipMedPow  = zeros(numPairs, nPow);
+clipHighPow = zeros(numPairs, nPow);
+for idx = 1:numPairs
+    for p = 1:nPow
+        clipLowPow(idx,p)  = min(lowPow(p),  alphaLowPow(idx));
+        clipMedPow(idx,p)  = min(medPow(p),  alphaMedPow(idx));
+        clipHighPow(idx,p) = min(highPow(p),  alphaHighPow(idx));
+    end
+end
+aggPow = max(max(clipLowPow, clipMedPow), clipHighPow);  % 最終聚合之功率隸屬度
+
+% (b) 對時間，分別處理 shortTime, medTime, longTime
+clipShortT = zeros(numPairs, nTime);
+clipMedT   = zeros(numPairs, nTime);
+clipLongT  = zeros(numPairs, nTime);
+for idx = 1:numPairs
+    for t_idx = 1:nTime
+        clipShortT(idx,t_idx) = min(shortTime(t_idx), alphaShortT(idx));
+        clipMedT(idx,t_idx)   = min(medTime(t_idx),   alphaMedTime(idx));
+        clipLongT(idx,t_idx)  = min(longTime(t_idx),  alphaLongT(idx));
+    end
+end
+aggTime = max(max(clipShortT, clipMedT), clipLongT);  % 最終聚合之時間隸屬度
+
+%% 6. 畫出各個輸入/輸出之隸屬函數 (選擇性繪圖)
+figure(1);
+subplot(2,2,1);
+plot(T, lowT, 'r', T, midT, 'g', T, highT, 'b');
+legend('Low','Medium','High');
+title('Food Temperature (°C)');
+xlabel('Temperature (°C)'); ylabel('μ(T)');
+
+subplot(2,2,2);
+plot(Pow, lowPow, 'r', Pow, medPow, 'g', Pow, highPow, 'b');
+legend('Low','Medium','High');
+title('Oven Power (watt)');
+xlabel('Power (watt)'); ylabel('μ(P)');
+
+subplot(2,2,3);
+plot(Wgt, lightWgt, 'r', Wgt, medWgt, 'g', Wgt, heavyWgt, 'b');
+legend('Light','Medium','Heavy');
+title('Food Weight (kg)');
+xlabel('Weight (kg)'); ylabel('μ(Weight)');
+
+subplot(2,2,4);
+plot(Time, shortTime, 'r', Time, medTime, 'g', Time, longTime, 'b');
+legend('Short','Medium','Long');
+title('Oven Operation Time (min)');
+xlabel('Time (min)'); ylabel('μ(Time)');
+
+%% 7. 去模糊化 (Defuzzification)
+% 將各 (溫度, 重量) 組之聚合後隸屬函數轉換成一個確定性數值，接下來將各種方法分別計算：
+% 建立 (T x Wgt) 的網格用於繪圖
+[WgtMesh, TMesh] = meshgrid(Wgt, T);
+
+% (A) 重心法 (COG)
+COG_P   = zeros(nT, nWgt);  
+COG_Time = zeros(nT, nWgt);
+pairIndex = 1;
+for i = 1:nT
+    for j = 1:nWgt
+        % 功率 COG
+        membershipP = aggPow(pairIndex,:);
+        if sum(membershipP) == 0
+            COG_P(i,j) = 0;
+        else
+            COG_P(i,j) = sum(membershipP .* Pow) / sum(membershipP);
+        end
+        % 時間 COG
+        membershipT = aggTime(pairIndex,:);
+        if sum(membershipT) == 0
+            COG_Time(i,j) = 0;
+        else
+            COG_Time(i,j) = sum(membershipT .* Time) / sum(membershipT);
+        end
+        pairIndex = pairIndex + 1;
+    end
+end
+
+figure(2);
+mesh(TMesh, WgtMesh, COG_P);
+xlabel('Temperature (°C)'); ylabel('Weight (kg)'); zlabel('Power (watt)');
+title('Power by Center of Gravity (COG)');
+
+figure(3);
+mesh(TMesh, WgtMesh, COG_Time);
+xlabel('Temperature (°C)'); ylabel('Weight (kg)'); zlabel('Time (min)');
+title('Time by Center of Gravity (COG)');
+
+% (B) 最大隸屬度均值法 (MOM)
+MOM_P   = zeros(nT, nWgt);
+MOM_Time = zeros(nT, nWgt);
+pairIndex = 1;
+for i = 1:nT
+    for j = 1:nWgt
+        % 功率 MOM
+        membP = aggPow(pairIndex,:);
+        maxValP = max(membP);
+        if maxValP == 0
+            MOM_P(i,j) = 0;
+        else
+            idxP = find(abs(membP - maxValP) < 1e-6);
+            MOM_P(i,j) = mean(Pow(idxP));
+        end
+        % 時間 MOM
+        membT = aggTime(pairIndex,:);
+        maxValT = max(membT);
+        if maxValT == 0
+            MOM_Time(i,j) = 0;
+        else
+            idxT = find(abs(membT - maxValT) < 1e-6);
+            MOM_Time(i,j) = mean(Time(idxT));
+        end
+        pairIndex = pairIndex + 1;
+    end
+end
+
+figure(4);
+mesh(TMesh, WgtMesh, MOM_P);
+xlabel('Temperature (°C)'); ylabel('Weight (kg)'); zlabel('Power (watt)');
+title('Power by Mean of Maximum (MOM)');
+
+figure(5);
+mesh(TMesh, WgtMesh, MOM_Time);
+xlabel('Temperature (°C)'); ylabel('Weight (kg)'); zlabel('Time (min)');
+title('Time by Mean of Maximum (MOM)');
+
+% (C) 修正 MOM (Modified MOM)
+mMOM_P   = zeros(nT, nWgt);
+mMOM_Time = zeros(nT, nWgt);
+pairIndex = 1;
+for i = 1:nT
+    for j = 1:nWgt
+        % 功率 mMOM
+        membP = aggPow(pairIndex,:);
+        maxValP = max(membP);
+        if maxValP == 0
+            mMOM_P(i,j) = 0;
+        else
+            idxP = find(abs(membP - maxValP) < 1e-6);
+            mMOM_P(i,j) = (min(Pow(idxP)) + max(Pow(idxP))) / 2;
+        end
+        % 時間 mMOM
+        membT = aggTime(pairIndex,:);
+        maxValT = max(membT);
+        if maxValT == 0
+            mMOM_Time(i,j) = 0;
+        else
+            idxT = find(abs(membT - maxValT) < 1e-6);
+            mMOM_Time(i,j) = (min(Time(idxT)) + max(Time(idxT))) / 2;
+        end
+        pairIndex = pairIndex + 1;
+    end
+end
+
+figure(6);
+mesh(TMesh, WgtMesh, mMOM_P);
+xlabel('Temperature (°C)'); ylabel('Weight (kg)'); zlabel('Power (watt)');
+title('Power by Modified MOM');
+
+figure(7);
+mesh(TMesh, WgtMesh, mMOM_Time);
+xlabel('Temperature (°C)'); ylabel('Weight (kg)'); zlabel('Time (min)');
+title('Time by Modified MOM');
+
+% (D) 中心平均法 (Center Average, CA)
+% CA 部分利用原先各規則激活值進行加權平均，此處針對功率與時間分別計算
+CA_P   = zeros(nT, nWgt);
+CA_Time = zeros(nT, nWgt);
+pairIndex = 1;
+for i = 1:nT
+    for j = 1:nWgt
+        % 依據功率各規則激活值
+        a_low  = alphaLowPow(pairIndex);
+        a_med  = alphaMedPow(pairIndex);
+        a_high = alphaHighPow(pairIndex);
+        % 對應的代表值取法：於聚合曲線中，找出等於該激活值之功率區間，然後取中位數
+        idx_low  = find(abs(aggPow(pairIndex,:) - a_low) < 1e-6);
+        idx_med  = find(abs(aggPow(pairIndex,:) - a_med) < 1e-6);
+        idx_high = find(abs(aggPow(pairIndex,:) - a_high) < 1e-6);
+        rep_low  = isempty(idx_low)  * 0 + ~isempty(idx_low)  * median(Pow(idx_low));
+        rep_med  = isempty(idx_med)  * 0 + ~isempty(idx_med)  * median(Pow(idx_med));
+        rep_high = isempty(idx_high) * 0 + ~isempty(idx_high) * median(Pow(idx_high));
+        denom = a_low + a_med + a_high;
+        if denom == 0
+            CA_P(i,j) = 0;
+        else
+            CA_P(i,j) = (a_low*rep_low + a_med*rep_med + a_high*rep_high) / denom;
+        end
+        
+        % 同理，針對時間做 CA 去模糊化
+        a_short  = alphaShortT(pairIndex);
+        a_medT   = alphaMedTime(pairIndex);
+        a_long   = alphaLongT(pairIndex);
+        idx_short = find(abs(aggTime(pairIndex,:) - a_short) < 1e-6);
+        idx_medT  = find(abs(aggTime(pairIndex,:) - a_medT) < 1e-6);
+        idx_long  = find(abs(aggTime(pairIndex,:) - a_long) < 1e-6);
+        rep_short = isempty(idx_short)*0 + ~isempty(idx_short)*median(Time(idx_short));
+        rep_medT  = isempty(idx_medT)*0 + ~isempty(idx_medT)*median(Time(idx_medT));
+        rep_long  = isempty(idx_long)*0 + ~isempty(idx_long)*median(Time(idx_long));
+        denomT = a_short + a_medT + a_long;
+        if denomT == 0
+            CA_Time(i,j) = 0;
+        else
+            CA_Time(i,j) = (a_short*rep_short + a_medT*rep_medT + a_long*rep_long) / denomT;
+        end
+        
+        pairIndex = pairIndex + 1;
+    end
+end
+
+figure(8);
+mesh(TMesh, WgtMesh, CA_P);
+xlabel('Temperature (°C)'); ylabel('Weight (kg)'); zlabel('Power (watt)');
+title('Power by Center Average (CA)');
+
+figure(9);
+mesh(TMesh, WgtMesh, CA_Time);
+xlabel('Temperature (°C)'); ylabel('Weight (kg)'); zlabel('Time (min)');
+title('Time by Center Average (CA)');
