@@ -1,0 +1,110 @@
+clc; clear; close;
+
+%% 基本設定：適應度縮放、選擇方式、交配演算
+scaleType   = 'linear';   % power_law / linear
+pickScheme  = 'TS';      % RWS / TS
+blendRule   = 'average';   % average / convex
+
+%% 目標函式 f(x) 與理論最優解
+grid      = -10 : 0.1 : 10;
+objCurve  = -15 * (sin(2 * grid)).^2 - (grid - 2).^2 + 160;
+[~, idx]  = max(objCurve);
+xOptTrue  = grid(idx);          % 用於設定終止界線
+
+%% 建立初始族群（10 個連續實值染色體）
+popSize  = 10;
+genePool = randi([-100 100], 1, popSize) * 0.1;
+
+%% 終止門檻（依縮放方式轉換）
+stopBar = -15 * (sin(2 * xOptTrue))^2 - (xOptTrue - 2)^2 + 160;
+switch scaleType
+    case 'power_law', stopBar = stopBar ^ 5;
+    case 'linear',    stopBar = 1e5 * stopBar + 5;
+end
+
+%% 主要演化流程
+fitTrack = [];          % 歷代最佳適應度
+bestX    = 0;           % 最終估計解
+
+for gen = 1 : 100
+    % ---------- 適應度計算 ----------
+    fitVal = -15 * (sin(2 * genePool)).^2 - (genePool - 2).^2 + 160;
+    switch scaleType
+        case 'power_law', fitVal = fitVal .^ 5;
+        case 'linear',    fitVal = 1e5 * fitVal + 5;
+    end
+    fitTrack = [fitTrack, max(fitVal)];
+    
+    % 檢查終止條件
+    if max(fitVal) >= stopBar
+        bestX = genePool(fitVal == max(fitVal));
+        break;
+    end
+    
+    % ---------- 選擇 ----------
+    switch pickScheme
+        case 'RWS'                     % 輪盤式選擇
+            cdfLine   = cumsum(fitVal);
+            tickets   = randi([0, round(sum(fitVal))], 1, popSize);
+            selIndex  = arrayfun(@(t) find(cdfLine >= t, 1, 'first'), tickets);
+        case 'TS'                      % 錦標賽選擇
+            selIndex = zeros(1, popSize);
+            for k = 1 : popSize
+                duel        = randperm(popSize, 2);
+                [~, winner] = max(fitVal(duel));
+                selIndex(k) = duel(winner);
+            end
+    end
+    parentSet = genePool(selIndex);
+    
+    % ---------- 交配 ----------
+    offspring = parentSet;
+    switch blendRule
+        case 'average'                 % 均值交配
+            for k = 1 : 8
+                pair = randperm(popSize, 2);
+                offspring(k) = 0.5 * sum(parentSet(pair));
+                while abs(offspring(k)) > 10
+                    pair = randperm(popSize, 2);
+                    offspring(k) = 0.5 * sum(parentSet(pair));
+                end
+            end
+        case 'convex'                  % 凸組合交配
+            for k = 1 : 8
+                pair = randperm(popSize, 2);
+                rVal = randi([0 10]) * 0.1;      % r ∈ [0,1]
+                offspring(k) = rVal * parentSet(pair(1)) + (1 - rVal) * parentSet(pair(2));
+                while abs(offspring(k)) > 10
+                    pair = randperm(popSize, 2);
+                    rVal = randi([0 10]) * 0.1;
+                    offspring(k) = rVal * parentSet(pair(1)) + (1 - rVal) * parentSet(pair(2));
+                end
+            end
+    end
+    
+    % ---------- 突變 ----------
+    mutated = offspring;
+    muCoef  = randi([0 10]) * 0.1;          % s 係數
+    noise   = randi([-10 10], 1, popSize) * 0.1;
+    mutated = mutated + muCoef .* noise;
+    
+    % 超界檢查，若超出 [-10,10] 則重新抽樣
+    while any(mutated > 10) || any(mutated < -10)
+        mutated = offspring;
+        muCoef  = randi([0 10]) * 0.1;
+        noise   = randi([-10 10], 1, popSize) * 0.1;
+        mutated = mutated + muCoef .* noise;
+    end
+    
+    % ---------- 更新族群 ----------
+    genePool = mutated;
+end
+
+%% 結果視覺化
+figure;
+plot(1 : gen, fitTrack);
+if bestX == 0
+    title(['EA generation: ', num2str(gen)]);
+else
+    title(['EA generation: ', num2str(gen), ', x = ', num2str(bestX)]);
+end
