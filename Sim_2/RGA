@@ -1,0 +1,100 @@
+clc; clear; close;
+
+%% 適應度縮放與選擇策略
+scaleMode   = 'power_law';   % power_law / linear
+selectStyle = 'TS';          % RWS / TS
+
+%% 目標函數描述
+gridX   = -10 : 0.1 : 10;
+fValue  = -15 * (sin(2 * gridX)).^2 - (gridX - 2).^2 + 160;
+[~, id] = max(fValue);
+trueOpt = gridX(id);               % 全域最佳解（用於終止條件）
+
+%% 初始族群（實值編碼）
+popNum   = 10;
+chromVec = randi([-100 100], 1, popNum) * 0.1;   % 每個染色體對應一個 x 值
+
+%% 迭代參數
+bestFitTrace = [];               % 紀錄歷代最佳適應度
+bestX        = 0;                % 收斂後估計的 x
+stopGate     = -15 * (sin(2 * trueOpt))^2 - (trueOpt - 2)^2 + 160;
+switch scaleMode
+    case 'power_law', stopGate = stopGate ^ 5;
+    case 'linear',    stopGate = 1e5 * stopGate + 5;
+end
+
+%% 主要演化迴圈
+for gen = 1 : 100
+    % ---------- 計算適應度 ----------
+    fitNow = -15 * (sin(2 * chromVec)).^2 - (chromVec - 2).^2 + 160;
+    switch scaleMode
+        case 'power_law', fitNow = fitNow .^ 5;
+        case 'linear',    fitNow = 1e5 * fitNow + 5;
+    end
+    bestFitTrace = [bestFitTrace, max(fitNow)];
+    
+    % 若已達到終止門檻，停止演化
+    if max(fitNow) >= stopGate
+        bestX = chromVec(fitNow == max(fitNow));
+        break;
+    end
+    
+    % ---------- 複製（選擇） ----------
+    switch selectStyle
+        case 'RWS'                    % 輪盤式
+            cdfLine       = cumsum(fitNow);
+            tickets       = randi([0, round(sum(fitNow))], 1, popNum);
+            idxPick       = arrayfun(@(t) find(cdfLine >= t, 1, 'first'), tickets);
+        case 'TS'                     % 錦標賽
+            idxPick = zeros(1, popNum);
+            for k = 1 : popNum
+                duel      = randperm(popNum, 2);
+                [~, win]  = max(fitNow(duel));
+                idxPick(k)= duel(win);
+            end
+    end
+    selPool = chromVec(idxPick);      % 被選中的染色體
+    
+    % ---------- 交配 ----------
+    crossPool = selPool;
+    pairList  = randperm(popNum, 8);  % 隨機取 4 對
+    for p = 1 : 4
+        sigma   = randi([-10 10]) * 0.1;
+        idx1    = pairList(2*p - 1);  idx2 = pairList(2*p);
+        diffVal = selPool(idx1) - selPool(idx2);
+        crossPool(idx1) = selPool(idx1) + sigma * diffVal;
+        crossPool(idx2) = selPool(idx2) - sigma * diffVal;
+        % 若超出範圍則重新隨機 sigma
+        while any(abs(crossPool([idx1 idx2])) > 10)
+            crossPool([idx1 idx2]) = selPool([idx1 idx2]);
+            sigma   = randi([-10 10]) * 0.1;
+            diffVal = selPool(idx1) - selPool(idx2);
+            crossPool(idx1) = selPool(idx1) + sigma * diffVal;
+            crossPool(idx2) = selPool(idx2) - sigma * diffVal;
+        end
+    end
+    
+    % ---------- 突變 ----------
+    mutatePool = crossPool;
+    sFactor    = randi([0 10]) * 0.1;
+    nVec       = randi([-10 10], 1, popNum) * 0.1;
+    mutatePool = mutatePool + sFactor .* nVec;
+    while any(mutatePool > 10) || any(mutatePool < -10)
+        mutatePool = crossPool;
+        sFactor    = randi([0 10]) * 0.1;
+        nVec       = randi([-10 10], 1, popNum) * 0.1;
+        mutatePool = mutatePool + sFactor .* nVec;
+    end
+    
+    % ---------- 更新族群 ----------
+    chromVec = mutatePool;
+end
+
+%% 結果繪圖
+figure;
+plot(1 : gen, bestFitTrace);
+if bestX == 0
+    title(['RGA generation: ', num2str(gen)]);
+else
+    title(['RGA generation: ', num2str(gen), ', x = ', num2str(bestX)]);
+end
