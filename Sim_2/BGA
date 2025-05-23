@@ -1,0 +1,174 @@
+clc; clear; close;
+
+%% 參數設定：指定適應度縮放、選擇、交配與突變方式
+fitMode    = 'power_law';    % power_law / linear
+selectMode = 'RWS';          % RWS / TS
+crossMode  = 'one-point';    % one-point / two-point / mask
+mutMode    = 'bit';          % bit / string / uniform
+
+%% 目標函數定義與最佳值
+xAxis      = -10 : 0.1 : 10;
+targetFun  = -15 * (sin(2 * xAxis)).^2 - (xAxis - 2).^2 + 160;
+[~, idx]   = max(targetFun);
+optimalX   = xAxis(idx);     % 用於設定終止門檻
+
+%% 初始化族群（10 bits 基因 × 族群大小 10）
+popSize         = 10;
+genePool        = randi([0 1], 10, popSize); % 每列一條染色體
+phenotype       = zeros(1, popSize);         % 對應十進位數值
+bitWeight       = [8 4 2 1 0.5 0.25 0.125 0.0625 0.03125]; % 符號位之外 9 bits 權重
+
+for i = 1 : popSize
+    while sum(genePool(i, 2:end) .* bitWeight) > 10        % 重新抽樣以限制 |x|≤10
+        genePool(i, :) = randi([0 1], 1, 10);
+    end
+    phenotype(i) = sum(genePool(i, 2:end) .* bitWeight);
+    if genePool(i, 1) == 1, phenotype(i) = -phenotype(i); end % 最高位 1 表負號
+end
+
+%% 演化主迴圈
+bestFitHistory = [];
+bestXEstimate  = 0;
+
+stopCriterion  = -15 * (sin(2 * optimalX))^2 - (optimalX - 2)^2 + 160;
+switch fitMode
+    case 'power_law', stopCriterion = stopCriterion ^ 5;
+    case 'linear',    stopCriterion = 1e5 * stopCriterion + 5;
+end
+
+for gen = 1 : 1000
+    % ---------- 適應度計算 ----------
+    fitnessVal = -15 * (sin(2 * phenotype)).^2 - (phenotype - 2).^2 + 160;
+    switch fitMode
+        case 'power_law', fitnessVal = fitnessVal .^ 5;
+        case 'linear',    fitnessVal = 1e5 * fitnessVal + 5;
+    end
+    bestFitHistory = [bestFitHistory, max(fitnessVal)];
+    if max(fitnessVal) >= stopCriterion
+        bestXEstimate = phenotype(fitnessVal == max(fitnessVal));
+        break;
+    end
+
+    % ---------- 複製（選擇） ----------
+    switch selectMode
+        case 'RWS'
+            cdfLine       = cumsum(fitnessVal);
+            tickets       = randi([0, round(sum(fitnessVal))], 1, popSize);
+            selectedIndex = arrayfun(@(t) find(cdfLine >= t, 1, 'first'), tickets);
+
+        case 'TS'
+            selectedIndex = zeros(1, popSize);
+            for k = 1 : popSize
+                duel = randperm(popSize, 2);
+                [~, mx] = max(fitnessVal(duel));
+                selectedIndex(k) = duel(mx);
+            end
+    end
+    selectedPool = genePool(selectedIndex, :);
+
+    % ---------- 交配 ----------
+    crossedPool    = selectedPool;
+    pairCandidates = randperm(popSize, 8);   % 共 4 對
+
+    switch crossMode
+        case 'one-point'
+            for p = 1 : 4
+                cp = randi([1 10]);                    % 單點位置
+                a  = pairCandidates(2*p - 1); b = pairCandidates(2*p);
+                crossedPool([a b], cp) = crossedPool([b a], cp);
+
+                while any([sum(crossedPool(a, 2:end) .* bitWeight), ...
+                            sum(crossedPool(b, 2:end) .* bitWeight)] > 10)
+                    crossedPool([a b], :) = selectedPool([a b], :);
+                    cp = randi([1 10]);
+                    crossedPool([a b], cp) = crossedPool([b a], cp);
+                end
+            end
+
+        case 'two-point'
+            for p = 1 : 4
+                pos = sort(randi([1 10], 1, 2));       % 兩點範圍
+                a = pairCandidates(2*p - 1); b = pairCandidates(2*p);
+                crossedPool([a b], pos(1):pos(2)) = crossedPool([b a], pos(1):pos(2));
+
+                while any([sum(crossedPool(a, 2:end) .* bitWeight), ...
+                            sum(crossedPool(b, 2:end) .* bitWeight)] > 10)
+                    crossedPool([a b], :) = selectedPool([a b], :);
+                    pos = sort(randi([1 10], 1, 2));
+                    crossedPool([a b], pos(1):pos(2)) = crossedPool([b a], pos(1):pos(2));
+                end
+            end
+
+        case 'mask'
+            for p = 1 : 4
+                pos = randi([1 10], 1, 2);             % 任兩 bit 掩碼交換
+                a = pairCandidates(2*p - 1); b = pairCandidates(2*p);
+                crossedPool(a, pos) = selectedPool(b, pos);
+                crossedPool(b, pos) = selectedPool(a, pos);
+
+                while any([sum(crossedPool(a, 2:end) .* bitWeight), ...
+                            sum(crossedPool(b, 2:end) .* bitWeight)] > 10)
+                    crossedPool([a b], :) = selectedPool([a b], :);
+                    pos = randi([1 10], 1, 2);
+                    crossedPool(a, pos) = selectedPool(b, pos);
+                    crossedPool(b, pos) = selectedPool(a, pos);
+                end
+            end
+    end
+
+    % ---------- 突變 ----------
+    mutatedPool = crossedPool;
+    switch mutMode
+        case 'bit'                     % 反轉單一 bit
+            mi  = randi([1 popSize]); mp = randi([1 10]);
+            mutatedPool(mi, mp) = ~mutatedPool(mi, mp);
+            while sum(mutatedPool(mi, 2:end) .* bitWeight) > 10
+                mutatedPool(mi, mp) = ~mutatedPool(mi, mp);
+                mi = randi([1 popSize]); mp = randi([1 10]);
+                mutatedPool(mi, mp) = ~mutatedPool(mi, mp);
+            end
+
+        case 'string'                  % 每 10 代翻轉整條染色體
+            if mod(gen, 10) == 0
+                mi = randi([1 popSize]);
+                mutatedPool(mi, :) = ~mutatedPool(mi, :);
+                retry = 0;
+                while sum(mutatedPool(mi, 2:end) .* bitWeight) > 10 && retry < 10
+                    mutatedPool(mi, :) = crossedPool(mi, :);
+                    mi = randi([1 popSize]);
+                    mutatedPool(mi, :) = ~mutatedPool(mi, :);
+                    retry = retry + 1;
+                end
+                if sum(mutatedPool(mi, 2:end) .* bitWeight) > 10
+                    mutatedPool(mi, 1) = ~mutatedPool(mi, 1);
+                end
+            end
+
+        case 'uniform'                 % 每奇數代隨機翻轉兩 bit
+            if mod(gen, 2)
+                mi = randi([1 popSize]);
+                mp = randi([1 10], 1, 2);
+                mutatedPool(mi, mp) = ~mutatedPool(mi, mp);
+                while sum(mutatedPool(mi, 2:end) .* bitWeight) > 10
+                    mutatedPool(mi, :) = crossedPool(mi, :);
+                    mp = randi([1 10], 1, 2);
+                    mutatedPool(mi, mp) = ~mutatedPool(mi, mp);
+                end
+            end
+    end
+
+    % ---------- 更新族群 ----------
+    genePool  = mutatedPool;
+    for i = 1 : popSize
+        phenotype(i) = sum(genePool(i, 2:end) .* bitWeight);
+        if genePool(i, 1) == 1, phenotype(i) = -phenotype(i); end
+    end
+end
+
+%% 結果繪圖
+plot(1 : gen, bestFitHistory);
+if bestXEstimate == 0
+    title(['BGA generation: ', num2str(gen)]);
+else
+    title(['BGA generation: ', num2str(gen), ', x = ', num2str(bestXEstimate)]);
+end
