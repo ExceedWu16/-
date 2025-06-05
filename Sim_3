@@ -1,0 +1,133 @@
+% 多層感知器兩輸入‧二十隱藏‧一輸出，倒傳遞＋動量
+clear; clc;
+
+% 參數設定
+learning_rate      = 0.5;
+iterations         = 1e5;
+alpha              = 0.99;          % 動量項
+bias               = 0;             % 偏差項（此處設定為 0，仍保留加總形式）
+input_size         = 2;
+hidden_size        = 15;
+output_size        = 1;
+train_pattern_num  = 300;
+test_pattern_num   = 100;
+total_pattern_num  = train_pattern_num + test_pattern_num;
+
+% 匿名函式
+logistic      = @(x) 1./(1+exp(-x));
+Phi           = @(v) logistic(v).*(1-logistic(v));
+MSE_fun       = @(d,y) 0.5*mean((d(:)-y(:)).^2);
+ideal_output  = @(x,y) 5.*sin(pi.*x.^2).*sin(2.*pi.*y) + 1;
+
+% 產生資料
+rng(7777);
+x = -0.8 + (0.7+0.8).*rand(total_pattern_num,input_size);  % 均勻分佈於[-0.8,0.7]
+d = ideal_output(x(:,1),x(:,2));
+
+% 分割訓練／測試
+x_train = x(1:train_pattern_num,:);
+x_test  = x(train_pattern_num+1:end,:);
+d_train = d(1:train_pattern_num);
+d_test  = d(train_pattern_num+1:end);
+
+% d_train 縮放至 [0.2,0.8]
+dmin = min(d_train);
+dmax = max(d_train);
+d_train = (d_train - dmin).*(0.8-0.2)./(dmax-dmin) + 0.2;
+
+% 權重初始化 (±0.5)
+W_hidden = -0.5 + rand(hidden_size ,input_size);
+W_output = -0.5 + rand(output_size,hidden_size);
+dW_hidden_last = zeros(size(W_hidden));
+dW_output_last = zeros(size(W_output));
+
+% 訓練
+MSE_in_iterations = zeros(iterations,1);
+for itr = 1:iterations
+    % 前向傳播
+    V_hidden = x_train*W_hidden.' + bias;
+    y_hidden = logistic(V_hidden);
+    V_output = y_hidden*W_output.' + bias;
+    y_output = logistic(V_output);
+
+    % 誤差與 MSE
+    error = d_train - y_output;
+    MSE_in_iterations(itr) = MSE_fun(d_train,y_output);
+
+    % 反向傳播
+    delta_output = error .* Phi(V_output);
+    dW_output = (learning_rate/train_pattern_num) * (delta_output.'*y_hidden) + alpha*dW_output_last;
+
+    delta_hidden = (W_output.'*delta_output.').' .* Phi(V_hidden);
+    dW_hidden = (learning_rate/train_pattern_num) * (x_train.'*delta_hidden).' + alpha*dW_hidden_last;
+
+    % 更新權重
+    W_hidden = W_hidden + dW_hidden;
+    W_output = W_output + dW_output;
+    dW_hidden_last = dW_hidden;
+    dW_output_last = dW_output;
+end
+fprintf('訓練次數: %d  訓練完的Eav: %.6f\n', iterations, MSE_in_iterations(end));
+
+% 測試階段資料縮放
+d_test_scaled = (d_test - min(d_test)).*(0.8-0.2)./(max(d_test)-min(d_test)) + 0.2;
+
+% 測試前向
+V_hidden = x_test*W_hidden.' + bias;
+y_hidden = logistic(V_hidden);
+V_output = y_hidden*W_output.' + bias;
+y_output = logistic(V_output);
+test_error = d_test_scaled - y_output;
+test_MSE = 0.5*mean(test_error.^2);
+fprintf('測試時的Eav: %.6f\n', test_MSE);
+
+% 繪圖
+figure('Position',[100 100 1100 1100])
+
+% 1. MSE 曲線
+subplot(2,2,1);
+plot(1:iterations, MSE_in_iterations);
+title('Mean Squared Error','FontSize',20);
+xlabel('Iteration'); ylabel('MSE');
+
+% 2. 理想輸出曲面
+subplot(2,2,2);
+[X_all,Y_all] = meshgrid(sort(x(:,1)),sort(x(:,2)));
+Z_all = ideal_output(X_all,Y_all);
+surf(X_all,Y_all,Z_all,'EdgeColor','none'); colormap('jet'); view(45,25);
+title('Desire','FontSize',20);
+
+% 3. 訓練資料預測曲面
+subplot(2,2,3);
+[x1_t,x2_t] = meshgrid(sort(x_train(:,1)),sort(x_train(:,2)));
+d_plot2 = zeros(size(x1_t));
+for i = 1:train_pattern_num
+    trained_X = [x1_t(:,i) x2_t(:,i)];
+    Vh = trained_X*W_hidden.' + bias;
+    yh = logistic(Vh);
+    Vo = yh*W_output.' + bias;
+    yo = logistic(Vo);
+    yo = ((yo - 0.2)./0.6).*(6 - (-4)) + (-4);  % 反縮放
+    d_plot2(:,i) = yo(:,1);
+end
+surf(x1_t,x2_t,d_plot2,'EdgeColor','none'); colormap('jet'); view(45,25);
+title('train','FontSize',20);
+
+% 4. 測試資料預測曲面
+subplot(2,2,4);
+[x1_s,x2_s] = meshgrid(sort(x_test(:,1)),sort(x_test(:,2)));
+d_plot3 = zeros(size(x1_s));
+for i = 1:test_pattern_num
+    trained_X = [x1_s(:,i) x2_s(:,i)];
+    Vh = trained_X*W_hidden.' + bias;
+    yh = logistic(Vh);
+    Vo = yh*W_output.' + bias;
+    yo = logistic(Vo);
+    a = min(d_test_scaled); b = max(d_test_scaled);
+    yo = ((yo - 0.2)./0.6).*(b - a) + a;
+    d_plot3(:,i) = yo(:,1);
+end
+surf(x1_s,x2_s,d_plot3,'EdgeColor','none'); colormap('jet'); view(45,25);
+title('test','FontSize',20);
+
+sgtitle('MLP Training and Prediction','FontSize',22);
